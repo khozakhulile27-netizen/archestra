@@ -393,6 +393,7 @@ const chatRoutes: FastifyPluginAsyncZod = async (fastify) => {
             ? await injectSkillActivation({
                 messages: messages as ChatMessage[],
                 organizationId,
+                userId: user.id,
               })
             : (messages as ChatMessage[]);
 
