@@ -8,12 +8,14 @@ export const SYSTEM_PROMPT_VARIABLE_PATHS = {
   userName: `${USER_SYSTEM_PROMPT_CONTEXT_KEY}.name`,
   userEmail: `${USER_SYSTEM_PROMPT_CONTEXT_KEY}.email`,
   userTeams: `${USER_SYSTEM_PROMPT_CONTEXT_KEY}.teams`,
+  userMemories: `${USER_SYSTEM_PROMPT_CONTEXT_KEY}.memories`,
 } as const;
 
 export const SYSTEM_PROMPT_VARIABLE_EXPRESSIONS = {
   userName: toTemplateExpression(SYSTEM_PROMPT_VARIABLE_PATHS.userName),
   userEmail: toTemplateExpression(SYSTEM_PROMPT_VARIABLE_PATHS.userEmail),
   userTeams: toTemplateExpression(SYSTEM_PROMPT_VARIABLE_PATHS.userTeams),
+  userMemories: toTemplateExpression(SYSTEM_PROMPT_VARIABLE_PATHS.userMemories),
 } as const;
 
 /**
@@ -33,6 +35,11 @@ export const SYSTEM_PROMPT_VARIABLES = [
   {
     expression: SYSTEM_PROMPT_VARIABLE_EXPRESSIONS.userTeams,
     description: "Team names the user belongs to (array)",
+  },
+  {
+    expression: SYSTEM_PROMPT_VARIABLE_EXPRESSIONS.userMemories,
+    description:
+      "Durable facts remembered about this user across conversations (newline-separated bullet list)",
   },
 ] as const;
 
@@ -137,6 +144,12 @@ export interface UserSystemPromptContext {
     name: string;
     email: string;
     teams: string[];
+    /**
+     * Pre-formatted newline-separated bullet list of durable memory facts,
+     * e.g. "- Prefers concise responses\n- Working on Project X".
+     * Undefined when no memories are stored for the user.
+     */
+    memories?: string;
   };
 }
 
@@ -144,12 +157,22 @@ export function buildUserSystemPromptContext(params: {
   userName: string;
   userEmail: string;
   userTeams: string[];
+  /**
+   * Raw memory content strings fetched from the user_memories table.
+   * Each string becomes a bullet line when rendered via {{user.memories}}.
+   * Omit or pass an empty array when memories are not available.
+   */
+  userMemories?: string[];
 }): UserSystemPromptContext {
+  const memoriesText = (params.userMemories ?? [])
+    .map((m) => `- ${m}`)
+    .join("\n");
   return {
     [USER_SYSTEM_PROMPT_CONTEXT_KEY]: {
       name: params.userName,
       email: params.userEmail,
       teams: params.userTeams,
+      ...(memoriesText ? { memories: memoriesText } : {}),
     },
   };
 }

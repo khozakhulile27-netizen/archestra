@@ -4,6 +4,7 @@ import {
   type ChatErrorResponse,
   isModelSelectionComplete,
   RouteId,
+  SYSTEM_PROMPT_VARIABLE_EXPRESSIONS,
   type SupportedProvider,
   TimeInMs,
   type TokenUsage,
@@ -52,6 +53,7 @@ import {
   ScheduleTriggerModel,
   ScheduleTriggerRunModel,
   TeamModel,
+  UserMemoryModel,
 } from "@/models";
 import { startActiveChatSpan } from "@/observability/tracing";
 import {
@@ -273,6 +275,14 @@ const chatRoutes: FastifyPluginAsyncZod = async (fastify) => {
       // Build system prompt from agent's systemPrompt field
       let systemPrompt: string | undefined;
 
+      // Fetch memories ahead of template rendering — required for both
+      // {{user.memories}} inline injection and the fallback appended block.
+      const userMemories = await UserMemoryModel.findActiveForUser({
+        userId: user.id,
+        organizationId,
+        agentId: agentId ?? null,
+      });
+
       // Build template context only when prompts use Handlebars syntax
       let promptContext: UserSystemPromptContext | null = null;
       if (promptNeedsRendering(agent.systemPrompt)) {
@@ -281,6 +291,7 @@ const chatRoutes: FastifyPluginAsyncZod = async (fastify) => {
           userName: user.name,
           userEmail: user.email,
           userTeams: userTeams.map((t) => t.name),
+          userMemories: userMemories.map((m) => m.content),
         });
       }
 
@@ -288,6 +299,20 @@ const chatRoutes: FastifyPluginAsyncZod = async (fastify) => {
         agent.systemPrompt,
         promptContext,
       );
+
+      // Avoid injecting memories twice: when the agent's system prompt already
+      // uses {{user.memories}} the facts are rendered inline during template
+      // compilation above, so we skip the fallback appended block.
+      const templateHandlesMemories =
+        agent.systemPrompt?.includes(
+          SYSTEM_PROMPT_VARIABLE_EXPRESSIONS.userMemories,
+        ) ?? false;
+
+      let memoriesBlock: string | undefined;
+      if (userMemories.length > 0 && !templateHandlesMemories) {
+        const lines = userMemories.map((m) => `- ${m.content}`).join("\n");
+        memoriesBlock = `## What you know about this user\n${lines}`;
+      }
 
       let toolResultInstructions: string = "";
       // Add MCP UI instruction when tools are available
@@ -300,7 +325,12 @@ const chatRoutes: FastifyPluginAsyncZod = async (fastify) => {
         "When a tool execution is not approved by the user, do not retry it. Explain what happened and ask the user what they'd like to do instead.";
 
       systemPrompt =
-        [renderedPrompt, toolDenialInstruction, toolResultInstructions]
+        [
+          renderedPrompt,
+          memoriesBlock,
+          toolDenialInstruction,
+          toolResultInstructions,
+        ]
           .filter(Boolean)
           .join("\n\n") || undefined;
 
